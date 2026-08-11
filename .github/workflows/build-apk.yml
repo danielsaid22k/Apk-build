@@ -5,25 +5,32 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      DEBIAN_FRONTEND: noninteractive
+    permissions:
+      contents: read
 
     steps:
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Verificar projeto
+      - name: Verificar estrutura do projeto
+        shell: bash
         run: |
           echo "========================================"
           echo " CRYPTO CERTIFIED SWITCH - APK BUILD"
           echo "========================================"
 
+          echo ""
+          echo "Diretorio atual:"
           pwd
+
+          echo ""
+          echo "Arquivos principais:"
           ls -la
+
+          echo ""
+          echo "Verificando arquivos obrigatorios..."
 
           test -f main.py || {
             echo "ERRO: main.py nao encontrado"
@@ -40,164 +47,169 @@ jobs:
             exit 1
           }
 
+          echo ""
           echo "Estrutura principal OK."
 
-      - name: Instalar dependencias Linux
+      - name: Validar sintaxe Python
+        shell: bash
         run: |
-          sudo apt-get update
+          echo "Compilando sintaxe Python..."
 
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            python3 \
-            python3-pip \
-            python3-venv \
-            python3-dev \
-            build-essential \
-            autoconf \
-            automake \
-            libtool \
-            libtool-bin \
-            pkg-config \
-            cmake \
-            ninja-build \
-            ccache \
-            libffi-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libsqlite3-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libtinfo6 \
-            gettext \
-            patch \
-            wget \
-            curl
+          python3 -m py_compile main.py
+          python3 -m py_compile android_config.py
 
-          java -version
-          python3 --version
-
-      - name: Preparar Python do build
-        run: |
-          python3 -m pip install --upgrade \
-            "pip<26" \
-            setuptools \
-            wheel \
-            virtualenv
-
-          python3 -m pip --version
-
-      - name: Instalar Buildozer
-        run: |
-          python3 -m pip install --upgrade \
-            buildozer \
-            cython
-
-          buildozer --version
-          cython --version
-
-      - name: Aceitar licencas Android
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --licenses >/dev/null || true
-
-      - name: Instalar Android SDK
-        run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            "build-tools;36.1.0"
-
-          echo "Build tools instalados:"
-          ls -la "$ANDROID_HOME/build-tools"
-
-      - name: Verificar AIDL
-        run: |
-          echo "Procurando AIDL..."
-
-          find "$ANDROID_HOME/build-tools" \
-            -type f \
-            -name aidl \
-            -print
-
-          AIDL="$(find "$ANDROID_HOME/build-tools" \
-            -type f \
-            -name aidl \
-            -perm -111 \
-            | sort -V \
-            | tail -1)"
-
-          if [ -z "$AIDL" ]; then
-            echo "ERRO: AIDL nao encontrado"
-            exit 1
+          if [ -d "app" ]; then
+            find app -type f -name "*.py" -print0 | xargs -0 -r -n1 python3 -m py_compile
           fi
 
-          echo "AIDL encontrado:"
-          echo "$AIDL"
+          if [ -d "ccs" ]; then
+            find ccs -type f -name "*.py" -print0 | xargs -0 -r -n1 python3 -m py_compile
+          fi
 
-          "$AIDL" --help >/dev/null
+          echo ""
+          echo "Sintaxe Python OK."
 
-      - name: Limpar build anterior
+      - name: Preparar buildozer.spec
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("buildozer.spec")
+
+          text = path.read_text(
+              encoding="utf-8",
+              errors="replace",
+          )
+
+          replacements = {
+              "requirements": "python3,kivy",
+              "android.api": "35",
+              "android.minapi": "26",
+              "android.archs": "arm64-v8a",
+              "android.accept_sdk_license": "True",
+              "android.skip_update": "False",
+          }
+
+          lines = text.splitlines()
+          output = []
+          found = set()
+
+          for line in lines:
+              stripped = line.strip()
+
+              replaced = False
+
+              for key, value in replacements.items():
+                  prefixes = (
+                      f"{key} =",
+                      f"#{key} =",
+                      f"# {key} =",
+                  )
+
+                  if any(stripped.startswith(p) for p in prefixes):
+                      output.append(
+                          f"{key} = {value}"
+                      )
+                      found.add(key)
+                      replaced = True
+                      break
+
+              if not replaced:
+                  output.append(line)
+
+          for key, value in replacements.items():
+              if key not in found:
+                  output.append(
+                      f"{key} = {value}"
+                  )
+
+          path.write_text(
+              "\n".join(output) + "\n",
+              encoding="utf-8",
+          )
+
+          print("buildozer.spec atualizado.")
+          PY
+
+          echo ""
+          echo "Configuracao final:"
+          grep -nE \
+            "requirements|android.api|android.minapi|android.archs|android.accept_sdk_license|android.skip_update" \
+            buildozer.spec
+
+      - name: Limpar arquivos antigos de compilacao
+        shell: bash
         run: |
           rm -rf .buildozer
           rm -rf bin
+
           mkdir -p bin
 
-      - name: Compilar APK
-        run: |
-          set -o pipefail
+          echo "Ambiente local de build limpo."
 
-          echo "Iniciando compilacao limpa..."
-          buildozer -v android debug 2>&1 | tee build.log
+      - name: Compilar APK
+        id: buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          command: buildozer -v android debug
+          buildozer_version: stable
+          workdir: .
 
       - name: Localizar APK
-        if: success()
+        shell: bash
         run: |
+          echo ""
           echo "Procurando APK..."
 
           find . \
             -type f \
-            -iname "*.apk" \
+            -name "*.apk" \
             -print
 
-          APK="$(find . \
-            -type f \
-            -iname "*.apk" \
-            | head -1)"
+          APK_COUNT="$(find . -type f -name '*.apk' | wc -l)"
 
-          if [ -z "$APK" ]; then
-            echo "ERRO: compilacao terminou mas nenhum APK foi encontrado"
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo ""
+            echo "ERRO: nenhum APK encontrado."
             exit 1
           fi
 
-          echo "APK encontrado:"
+          echo ""
+          echo "APK encontrado."
+
+      - name: Preparar APK final
+        shell: bash
+        run: |
+          mkdir -p release
+
+          APK="$(find . -type f -name '*.apk' | head -n 1)"
+
+          echo "APK original:"
           echo "$APK"
 
-          cp "$APK" \
-            "Crypto_Certified_Switch_v7_1_0.apk"
+          cp \
+            "$APK" \
+            "release/Crypto_Certified_Switch_v7_1_0.apk"
 
-          ls -lh \
-            "Crypto_Certified_Switch_v7_1_0.apk"
+          echo ""
+          echo "APK final:"
+          ls -lh release/
 
       - name: Salvar APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Crypto-Certified-Switch-v7.1.0-APK
-          path: Crypto_Certified_Switch_v7_1_0.apk
+          path: release/Crypto_Certified_Switch_v7_1_0.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Salvar log se falhar
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CCS-build-error-log
-          path: |
-            build.log
-            .buildozer/android/platform/**/config.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Build concluido
+        shell: bash
+        run: |
+          echo "========================================"
+          echo " APK GERADO COM SUCESSO"
+          echo "========================================"
+          echo ""
+          echo "Arquivo:"
+          echo "Crypto_Certified_Switch_v7_1_0.apk"
