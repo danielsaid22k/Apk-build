@@ -15,41 +15,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
-            python3-pip python3-venv \
-            autoconf automake libtool \
-            pkg-config zlib1g-dev libffi-dev \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            python3-pip \
+            python3-venv \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libffi-dev \
             libssl-dev
 
       - name: Instalar Buildozer
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install buildozer cython
-
-      - name: Preparar Android SDK
-        run: |
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;37.0.0"
-
-      - name: Configurar SDK no Buildozer
-        run: |
-          sed -i '/^#android.sdk_path =/c\android.sdk_path = '"${ANDROID_HOME}" buildozer.spec
-          grep -n "android.sdk_path" buildozer.spec
-
-      - name: Compilar APK
-        run: |
-          buildozer -v android debug
-
-      - name: Localizar APK
-        run: |
-          find bin -type f -name "*.apk" -print
-
-      - name: Salvar APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Crypto-Certified-Switch-APK
-          path: bin/*.apk
-          if-no-files-found: error
+          python3 -m pip install buildozer cy
