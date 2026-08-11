@@ -26,20 +26,20 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install buildozer cython
 
-      - name: Aceitar licencas Android
+      - name: Preparar Android SDK
         run: |
           yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
-      - name: Instalar Android SDK necessario
-        run: |
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;37.0.0"
 
+      - name: Configurar SDK no Buildozer
+        run: |
+          sed -i '/^#android.sdk_path =/c\android.sdk_path = '"${ANDROID_HOME}" buildozer.spec
+          grep -n "android.sdk_path" buildozer.spec
+
       - name: Compilar APK
-        env:
-          ANDROIDSDK: ${{ env.ANDROID_HOME }}
         run: |
           buildozer -v android debug
 
