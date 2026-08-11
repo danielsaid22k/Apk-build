@@ -5,7 +5,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+
+    container:
+      image: ghcr.io/kivy/buildozer:latest
 
     permissions:
       contents: read
@@ -14,24 +17,25 @@ jobs:
       - name: Baixar projeto
         uses: actions/checkout@v4
 
+      - name: Verificar ambiente
+        shell: bash
+        run: |
+          echo "======================================"
+          echo " CRYPTO CERTIFIED SWITCH - ANDROID"
+          echo "======================================"
+
+          pwd
+          python3 --version
+          buildozer --version
+          java -version || true
+
+          echo ""
+          echo "Arquivos do projeto:"
+          ls -la
+
       - name: Verificar estrutura do projeto
         shell: bash
         run: |
-          echo "========================================"
-          echo " CRYPTO CERTIFIED SWITCH - APK BUILD"
-          echo "========================================"
-
-          echo ""
-          echo "Diretorio atual:"
-          pwd
-
-          echo ""
-          echo "Arquivos principais:"
-          ls -la
-
-          echo ""
-          echo "Verificando arquivos obrigatorios..."
-
           test -f main.py || {
             echo "ERRO: main.py nao encontrado"
             exit 1
@@ -42,53 +46,48 @@ jobs:
             exit 1
           }
 
-          test -f android_config.py || {
-            echo "ERRO: android_config.py nao encontrado"
-            exit 1
-          }
-
-          echo ""
-          echo "Estrutura principal OK."
+          echo "Estrutura OK."
 
       - name: Validar sintaxe Python
         shell: bash
         run: |
-          echo "Compilando sintaxe Python..."
-
           python3 -m py_compile main.py
-          python3 -m py_compile android_config.py
 
-          if [ -d "app" ]; then
-            find app -type f -name "*.py" -print0 | xargs -0 -r -n1 python3 -m py_compile
+          if [ -f android_config.py ]; then
+            python3 -m py_compile android_config.py
           fi
 
-          if [ -d "ccs" ]; then
-            find ccs -type f -name "*.py" -print0 | xargs -0 -r -n1 python3 -m py_compile
+          if [ -d app ]; then
+            find app -type f -name "*.py" -print0 \
+              | xargs -0 -r -n1 python3 -m py_compile
           fi
 
-          echo ""
+          if [ -d ccs ]; then
+            find ccs -type f -name "*.py" -print0 \
+              | xargs -0 -r -n1 python3 -m py_compile
+          fi
+
           echo "Sintaxe Python OK."
 
-      - name: Preparar buildozer.spec
+      - name: Ajustar buildozer.spec
         shell: bash
         run: |
           python3 <<'PY'
           from pathlib import Path
 
-          path = Path("buildozer.spec")
+          p = Path("buildozer.spec")
 
-          text = path.read_text(
+          text = p.read_text(
               encoding="utf-8",
               errors="replace",
           )
 
-          replacements = {
+          desired = {
               "requirements": "python3,kivy",
               "android.api": "35",
               "android.minapi": "26",
               "android.archs": "arm64-v8a",
               "android.accept_sdk_license": "True",
-              "android.skip_update": "False",
           }
 
           lines = text.splitlines()
@@ -96,21 +95,12 @@ jobs:
           found = set()
 
           for line in lines:
-              stripped = line.strip()
-
+              normalized = line.strip().lstrip("#").strip()
               replaced = False
 
-              for key, value in replacements.items():
-                  prefixes = (
-                      f"{key} =",
-                      f"#{key} =",
-                      f"# {key} =",
-                  )
-
-                  if any(stripped.startswith(p) for p in prefixes):
-                      output.append(
-                          f"{key} = {value}"
-                      )
+              for key, value in desired.items():
+                  if normalized.startswith(key + " ="):
+                      output.append(f"{key} = {value}")
                       found.add(key)
                       replaced = True
                       break
@@ -118,82 +108,61 @@ jobs:
               if not replaced:
                   output.append(line)
 
-          for key, value in replacements.items():
+          for key, value in desired.items():
               if key not in found:
-                  output.append(
-                      f"{key} = {value}"
-                  )
+                  output.append(f"{key} = {value}")
 
-          path.write_text(
+          p.write_text(
               "\n".join(output) + "\n",
               encoding="utf-8",
           )
-
-          print("buildozer.spec atualizado.")
           PY
 
-          echo ""
-          echo "Configuracao final:"
           grep -nE \
-            "requirements|android.api|android.minapi|android.archs|android.accept_sdk_license|android.skip_update" \
+            "requirements|android.api|android.minapi|android.archs|android.accept_sdk_license" \
             buildozer.spec
 
-      - name: Limpar arquivos antigos de compilacao
+      - name: Limpar build antigo
         shell: bash
         run: |
           rm -rf .buildozer
           rm -rf bin
+          rm -rf release
 
-          mkdir -p bin
-
-          echo "Ambiente local de build limpo."
+          mkdir -p release
 
       - name: Compilar APK
-        id: buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        with:
-          command: buildozer -v android debug
-          buildozer_version: stable
-          workdir: .
+        shell: bash
+        run: |
+          set -o pipefail
+
+          buildozer -v android debug \
+            2>&1 | tee build.log
 
       - name: Localizar APK
         shell: bash
         run: |
-          echo ""
-          echo "Procurando APK..."
-
           find . \
             -type f \
             -name "*.apk" \
             -print
 
-          APK_COUNT="$(find . -type f -name '*.apk' | wc -l)"
+          APK="$(find . -type f -name '*.apk' | head -n 1)"
 
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo ""
+          if [ -z "$APK" ]; then
             echo "ERRO: nenhum APK encontrado."
             exit 1
           fi
 
-          echo ""
-          echo "APK encontrado."
+          echo "APK=$APK" >> "$GITHUB_ENV"
 
       - name: Preparar APK final
         shell: bash
         run: |
-          mkdir -p release
-
-          APK="$(find . -type f -name '*.apk' | head -n 1)"
-
-          echo "APK original:"
-          echo "$APK"
-
           cp \
             "$APK" \
-            "release/Crypto_Certified_Switch_v7_1_0.apk"
+            release/Crypto_Certified_Switch_v7_1_0.apk
 
-          echo ""
-          echo "APK final:"
           ls -lh release/
 
       - name: Salvar APK
@@ -204,12 +173,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Build concluido
-        shell: bash
-        run: |
-          echo "========================================"
-          echo " APK GERADO COM SUCESSO"
-          echo "========================================"
-          echo ""
-          echo "Arquivo:"
-          echo "Crypto_Certified_Switch_v7_1_0.apk"
+      - name: Salvar log se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypto-Certified-Switch-build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
