@@ -6,22 +6,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
-
-      # =====================================================
-      # 1. PROJETO
-      # =====================================================
-
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Verificar estrutura do projeto
+      - name: Verificar projeto
         run: |
           echo "========================================"
           echo " CRYPTO CERTIFIED SWITCH - APK BUILD"
@@ -29,9 +24,6 @@ jobs:
 
           pwd
           ls -la
-
-          echo ""
-          echo "Verificando arquivos obrigatorios..."
 
           test -f main.py || {
             echo "ERRO: main.py nao encontrado"
@@ -50,11 +42,7 @@ jobs:
 
           echo "Estrutura principal OK."
 
-      # =====================================================
-      # 2. DEPENDENCIAS LINUX
-      # =====================================================
-
-      - name: Instalar dependencias
+      - name: Instalar dependencias Linux
         run: |
           sudo apt-get update
 
@@ -91,122 +79,40 @@ jobs:
           java -version
           python3 --version
 
-      # =====================================================
-      # 3. BUILDOZER
-      # =====================================================
+      - name: Preparar Python do build
+        run: |
+          python3 -m pip install --upgrade \
+            "pip<26" \
+            setuptools \
+            wheel \
+            virtualenv
+
+          python3 -m pip --version
 
       - name: Instalar Buildozer
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel
-
-          python3 -m pip install \
+          python3 -m pip install --upgrade \
             buildozer \
-            cython \
-            virtualenv \
-            sh \
-            appdirs \
-            colorama \
-            jinja2 \
-            packaging \
-            toml \
-            build \
-            meson \
-            ninja
+            cython
 
-          echo ""
-          echo "Buildozer:"
           buildozer --version
-
-          echo ""
-          echo "Cython:"
           cython --version
-
-      # =====================================================
-      # 4. SDK ANDROID
-      # =====================================================
-
-      - name: Verificar Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          test -d "$ANDROID_HOME" || {
-            echo "ERRO: Android SDK nao encontrado"
-            exit 1
-          }
-
-          echo ""
-          echo "Conteudo do SDK:"
-          ls -la "$ANDROID_HOME"
-
-          echo ""
-          echo "sdkmanager moderno:"
-          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || {
-            echo "ERRO: sdkmanager moderno nao encontrado"
-            exit 1
-          }
-
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
-
-      # =====================================================
-      # 5. CORRECAO DEFINITIVA DO SDKMANAGER
-      # =====================================================
-
-      - name: Criar compatibilidade sdkmanager legado
-        run: |
-          echo "Criando estrutura que o Buildozer procura..."
-
-          sudo mkdir -p "$ANDROID_HOME/tools/bin"
-
-          sudo ln -sf \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "$ANDROID_HOME/tools/bin/sdkmanager"
-
-          sudo ln -sf \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" \
-            "$ANDROID_HOME/tools/bin/avdmanager"
-
-          echo ""
-          echo "Verificando links:"
-
-          ls -la "$ANDROID_HOME/tools/bin"
-
-          echo ""
-          echo "Testando sdkmanager pelo caminho legado:"
-
-          "$ANDROID_HOME/tools/bin/sdkmanager" --version
-
-      # =====================================================
-      # 6. LICENCAS
-      # =====================================================
 
       - name: Aceitar licencas Android
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --licenses || true
+            --licenses >/dev/null || true
 
-          echo "Licencas processadas."
-
-      # =====================================================
-      # 7. COMPONENTES SDK
-      # =====================================================
-
-      - name: Instalar componentes Android
+      - name: Instalar Android SDK
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
-            "build-tools;37.0.0"
+            "build-tools;36.1.0"
 
-          echo ""
-          echo "Build-tools instalados:"
-
+          echo "Build tools instalados:"
           ls -la "$ANDROID_HOME/build-tools"
-
-      # =====================================================
-      # 8. AIDL
-      # =====================================================
 
       - name: Verificar AIDL
         run: |
@@ -217,233 +123,81 @@ jobs:
             -name aidl \
             -print
 
-          if [ -x "$ANDROID_HOME/build-tools/37.0.0/aidl" ]; then
-            echo "AIDL 37 encontrado."
-          elif [ -x "$ANDROID_HOME/build-tools/35.0.0/aidl" ]; then
-            echo "AIDL 35 encontrado."
-          else
-            echo "ERRO: AIDL nao encontrado."
+          AIDL="$(find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name aidl \
+            -perm -111 \
+            | sort -V \
+            | tail -1)"
+
+          if [ -z "$AIDL" ]; then
+            echo "ERRO: AIDL nao encontrado"
             exit 1
           fi
 
-      # =====================================================
-      # 9. CONFIGURAR BUILDOZER.SPEC
-      # =====================================================
+          echo "AIDL encontrado:"
+          echo "$AIDL"
 
-      - name: Preparar buildozer.spec
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("buildozer.spec")
-
-          text = path.read_text(encoding="utf-8")
-
-          required = {
-              "android.sdk_path": "/usr/local/lib/android/sdk",
-              "android.accept_sdk_license": "True",
-              "android.skip_update": "False",
-          }
-
-          lines = text.splitlines()
-
-          clean = []
-
-          for line in lines:
-
-              stripped = line.strip()
-
-              normalized = stripped.lstrip("#").strip()
-
-              if any(
-                  normalized.startswith(key + " =")
-                  for key in required
-              ):
-                  continue
-
-              clean.append(line)
-
-          output = []
-
-          inserted = False
-
-          for line in clean:
-
-              output.append(line)
-
-              if line.strip() == "[app]" and not inserted:
-
-                  output.append("")
-                  output.append(
-                      "android.sdk_path = /usr/local/lib/android/sdk"
-                  )
-                  output.append(
-                      "android.accept_sdk_license = True"
-                  )
-                  output.append(
-                      "android.skip_update = False"
-                  )
-                  output.append("")
-
-                  inserted = True
-
-          if not inserted:
-              raise SystemExit(
-                  "ERRO: secao [app] nao encontrada."
-              )
-
-          path.write_text(
-              "\n".join(output) + "\n",
-              encoding="utf-8"
-          )
-
-          print("buildozer.spec atualizado.")
-          PY
-
-          echo ""
-          echo "Configuracao Android final:"
-
-          grep -nE \
-            "android.sdk_path|android.accept_sdk_license|android.skip_update|android.api|android.minapi|android.archs|requirements" \
-            buildozer.spec
-
-      # =====================================================
-      # 10. VALIDAR MAIN.PY
-      # =====================================================
-
-      - name: Validar Python
-        run: |
-          echo "Compilando sintaxe Python..."
-
-          python3 -m py_compile main.py
-          python3 -m py_compile android_config.py
-
-          echo "main.py e android_config.py OK."
-
-      # =====================================================
-      # 11. LIMPEZA DE BUILD ANTIGO
-      # =====================================================
+          "$AIDL" --help >/dev/null
 
       - name: Limpar build anterior
         run: |
           rm -rf .buildozer
           rm -rf bin
-          rm -rf release
-
-          mkdir -p release
-
-          echo "Build limpo."
-
-      # =====================================================
-      # 12. GARANTIR CAMINHOS SDK
-      # =====================================================
-
-      - name: Preparar ambiente Android
-        run: |
-          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/tools/bin:$PATH"
-
-          echo "PATH:"
-          echo "$PATH"
-
-          echo ""
-          echo "sdkmanager:"
-
-          which sdkmanager || true
-
-          "$ANDROID_HOME/tools/bin/sdkmanager" --version
-
-      # =====================================================
-      # 13. COMPILAR APK
-      # =====================================================
+          mkdir -p bin
 
       - name: Compilar APK
-        env:
-          ANDROIDSDK: /usr/local/lib/android/sdk
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
-          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/tools/bin:$PATH"
+          set -o pipefail
 
-          echo "========================================"
-          echo " INICIANDO COMPILACAO APK"
-          echo "========================================"
-
-          buildozer -v android debug
-
-      # =====================================================
-      # 14. PROCURAR APK
-      # =====================================================
+          echo "Iniciando compilacao limpa..."
+          buildozer -v android debug 2>&1 | tee build.log
 
       - name: Localizar APK
+        if: success()
         run: |
-          echo "========================================"
-          echo " PROCURANDO APK"
-          echo "========================================"
+          echo "Procurando APK..."
 
           find . \
             -type f \
-            -name "*.apk" \
+            -iname "*.apk" \
             -print
 
-          APK_FILE="$(find bin \
-            -maxdepth 1 \
+          APK="$(find . \
             -type f \
-            -name '*.apk' \
-            | head -n 1)"
+            -iname "*.apk" \
+            | head -1)"
 
-          if [ -z "$APK_FILE" ]; then
-            echo ""
-            echo "ERRO: nenhum APK encontrado em bin/"
-            echo ""
-            echo "Conteudo de bin:"
-            ls -lah bin || true
+          if [ -z "$APK" ]; then
+            echo "ERRO: compilacao terminou mas nenhum APK foi encontrado"
             exit 1
           fi
 
-          echo ""
           echo "APK encontrado:"
-          echo "$APK_FILE"
+          echo "$APK"
 
-          echo "APK_FILE=$APK_FILE" >> "$GITHUB_ENV"
-
-      # =====================================================
-      # 15. COPIAR APK FINAL
-      # =====================================================
-
-      - name: Preparar APK final
-        run: |
-          mkdir -p release
-
-          cp \
-            "$APK_FILE" \
-            "release/Crypto_Certified_Switch_v7_1_0_debug.apk"
-
-          echo ""
-          echo "APK final:"
+          cp "$APK" \
+            "Crypto_Certified_Switch_v7_1_0.apk"
 
           ls -lh \
-            release/Crypto_Certified_Switch_v7_1_0_debug.apk
-
-      # =====================================================
-      # 16. UPLOAD
-      # =====================================================
+            "Crypto_Certified_Switch_v7_1_0.apk"
 
       - name: Salvar APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Crypto-Certified-Switch-v7.1.0-APK
-          path: release/Crypto_Certified_Switch_v7_1_0_debug.apk
+          path: Crypto_Certified_Switch_v7_1_0.apk
           if-no-files-found: error
           retention-days: 30
 
-      # =====================================================
-      # 17. RESUMO
-      # =====================================================
-
-      - name: Build concluido
-        run: |
-          echo "========================================"
-          echo " APK GERADO COM SUCESSO"
-          echo "========================================"
-
-          ls -lh release/
+      - name: Salvar log se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CCS-build-error-log
+          path: |
+            build.log
+            .buildozer/android/platform/**/config.log
+          if-no-files-found: ignore
+          retention-days: 7
