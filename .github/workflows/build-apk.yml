@@ -40,43 +40,76 @@ jobs:
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
 
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;37.0.0"
 
-          echo "SDK preparado."
-          ls -la ${ANDROID_HOME}/build-tools/
-          ls -la ${ANDROID_HOME}/build-tools/37.0.0/
+          echo "Verificando AIDL:"
+          test -x "$ANDROID_HOME/build-tools/37.0.0/aidl"
+          "$ANDROID_HOME/build-tools/37.0.0/aidl" --help >/dev/null || true
 
-      - name: Configurar SDK no Buildozer
+      - name: Configurar Buildozer corretamente
         run: |
-          sed -i '/^[[:space:]]*android\.sdk_path[[:space:]]*=/d' buildozer.spec
-          sed -i '/^[[:space:]]*#android\.sdk_path[[:space:]]*=/d' buildozer.spec
+          python3 - <<'PY'
+          from pathlib import Path
 
-          printf '\nandroid.sdk_path = %s\n' "$ANDROID_HOME" >> buildozer.spec
+          p = Path("buildozer.spec")
+          text = p.read_text()
 
-          echo "Configuracao aplicada:"
-          grep -n "android.sdk_path" buildozer.spec
+          linhas_remover = (
+              "android.sdk_path",
+              "android.skip_update",
+              "android.accept_sdk_license",
+          )
 
-      - name: Verificar projeto
+          linhas = []
+
+          for linha in text.splitlines():
+              stripped = linha.strip().lstrip("#").strip()
+
+              if any(stripped.startswith(x + " =") for x in linhas_remover):
+                  continue
+
+              linhas.append(linha)
+
+          resultado = []
+          inserido = False
+
+          for linha in linhas:
+              resultado.append(linha)
+
+              if linha.strip() == "[app]" and not inserido:
+                  resultado.extend([
+                      "",
+                      "android.sdk_path = " + __import__("os").environ["ANDROID_HOME"],
+                      "android.skip_update = True",
+                      "android.accept_sdk_license = True",
+                      "",
+                  ])
+                  inserido = True
+
+          if not inserido:
+              raise SystemExit("ERRO: secao [app] nao encontrada no buildozer.spec")
+
+          p.write_text("\n".join(resultado) + "\n")
+          PY
+
+          echo "Configuracao Android aplicada:"
+          grep -nE "android.sdk_path|android.skip_update|android.accept_sdk_license" buildozer.spec
+
+      - name: Verificar SDK usado
         run: |
-          echo "Diretorio atual:"
-          pwd
+          echo "SDK do GitHub:"
+          echo "$ANDROID_HOME"
 
-          echo "Arquivos principais:"
-          ls -la
+          echo "AIDL:"
+          ls -lh "$ANDROID_HOME/build-tools/37.0.0/aidl"
 
-          echo "Buildozer spec:"
-          test -f buildozer.spec
-
-          echo "Main:"
-          test -f main.py
-
-          echo "Configuracao Android:"
-          grep -E "^(title|package.name|package.domain|source.dir|requirements|android.api|android.minapi|android.archs|android.sdk_path)" buildozer.spec || true
+          echo "Configuracao no buildozer.spec:"
+          grep -nE "android.sdk_path|android.skip_update|android.accept_sdk_license" buildozer.spec
 
       - name: Compilar APK
         env:
@@ -88,31 +121,27 @@ jobs:
 
       - name: Localizar APK
         run: |
-          echo "Conteudo da pasta bin:"
-          ls -lah bin || true
-
           echo "APKs encontrados:"
           find . -type f -name "*.apk" -print
 
-          APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
+          APK_FILE="$(find bin -maxdepth 1 -type f -name "*.apk" | head -n 1)"
 
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERRO: nenhum APK foi encontrado em bin/"
+          if [ -z "$APK_FILE" ]; then
+            echo "ERRO: APK nao encontrado."
             exit 1
           fi
+
+          echo "APK encontrado: $APK_FILE"
 
       - name: Preparar APK para download
         run: |
           mkdir -p release
 
-          APK_FILE=$(find bin -maxdepth 1 -type f -name "*.apk" | head -n 1)
+          APK_FILE="$(find bin -maxdepth 1 -type f -name "*.apk" | head -n 1)"
 
-          echo "APK original:"
-          echo "$APK_FILE"
+          cp "$APK_FILE" \
+            release/Crypto_Certified_Switch_v7_1_0_debug.apk
 
-          cp "$APK_FILE" release/Crypto_Certified_Switch_v7_1_0_debug.apk
-
-          echo "APK preparado:"
           ls -lh release/
 
       - name: Salvar APK
