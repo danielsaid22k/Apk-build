@@ -1,0 +1,12 @@
+
+# Build / Python cache
+.buildozer/
+**/__pycache__/
+*.pyc
+*.pyo
+build/
+bin/
+*.log
+
+# Secrets
+.env

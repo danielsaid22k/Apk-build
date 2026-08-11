@@ -1,0 +1,160 @@
+{
+  "app_name": "Crypto Certified Switch",
+  "version": "7.0.0",
+  "platform": "Windows 10/11",
+  "safe_mode": true,
+  "poll_interval_seconds": 100,
+  "wallets": [
+    {
+      "id": "phantom-ethereum",
+      "network": "ethereum",
+      "wallet": "phantom",
+      "address": "",
+      "enabled": false
+    },
+    {
+      "id": "binance-bnb",
+      "network": "bnb",
+      "wallet": "binance_web3",
+      "address": "",
+      "enabled": false
+    },
+    {
+      "id": "phantom-solana",
+      "network": "solana",
+      "wallet": "phantom",
+      "address": "",
+      "enabled": false
+    }
+  ],
+  "destination_wallets": {
+    "ethereum": {
+      "wallet": "trust_wallet",
+      "address": "",
+      "enabled": false
+    },
+    "bnb": {
+      "wallet": "trust_wallet",
+      "address": "",
+      "enabled": false
+    },
+    "solana": {
+      "wallet": "trust_wallet",
+      "address": "",
+      "enabled": false
+    }
+  },
+  "networks": {
+    "ethereum": {
+      "rpc_url": "https://ethereum-rpc.publicnode.com",
+      "symbol": "ETH",
+      "decimals": 18
+    },
+    "bnb": {
+      "rpc_url": "https://bsc-rpc.publicnode.com",
+      "symbol": "BNB",
+      "decimals": 18
+    },
+    "solana": {
+      "rpc_url": "https://api.mainnet-beta.solana.com",
+      "symbol": "SOL",
+      "decimals": 9
+    }
+  },
+  "rules": {
+    "block_same_origin_destination": true,
+    "require_destination_enabled": true,
+    "require_positive_net_value": true,
+    "min_recovery_score": 40,
+    "automatic_signing": false,
+    "automatic_debit": false,
+    "require_manual_wallet_confirmation": true,
+    "require_review_before_wallet": true
+  },
+  "approval_bridge": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "public_base_url": "http://127.0.0.1:8765",
+    "require_public_https_for_telegram": true,
+    "reject_localhost_links": true,
+    "health_path": "/health"
+  },
+  "telegram": {
+    "enabled": true,
+    "heartbeat_seconds": 60,
+    "retry_attempts": 3,
+    "retry_delay_seconds": 3,
+    "send_collection_receipt": true,
+    "professional_menu": true,
+    "wallet_confirmation_buttons": true,
+    "proposal_details_button": true,
+    "resend_pending_button": true,
+    "bridge_status_button": true,
+    "safe_link_guard": true
+  },
+  "backup": {
+    "enabled": true,
+    "startup": true,
+    "interval_seconds": 3600,
+    "keep": 20
+  },
+  "release_channel": "v7-windows-sprints-1-2-3",
+  "startup_checks": {
+    "create_runtime_directories": true,
+    "verify_bridge_port": true,
+    "verify_config": true
+  },
+  "windows": {
+    "one_click_launcher": true,
+    "cloudflared_quick_tunnel": true,
+    "automatic_public_url": true,
+    "python_virtual_environment": ".venv"
+  },
+  "fixes": {
+    "public_url_inside_approval_page": true,
+    "single_public_url_variable": "APPROVAL_BRIDGE_PUBLIC_URL",
+    "solana_classic_bundle_loader": true,
+    "spl_transfer_checked": true,
+    "spl_destination_ata_idempotent": true,
+    "spl_onchain_decimals_validation": true,
+    "pending_proposal_deduplication": true,
+    "solana_rpc_env_configuration": true,
+    "solana_rpc_helius": true,
+    "solana_rpc_server_proxy": true,
+    "solana_rpc_fallback": true,
+    "solana_rpc_startup_validation": true,
+    "solana_rpc_redacted_logs": true
+  },
+  "rpc": {
+    "solana": {
+      "configuration_source": ".env",
+      "helius_supported": true,
+      "server_side_proxy": true,
+      "fallback_supported": true,
+      "startup_validation": true,
+      "redacted_logging": true,
+      "log_file": "logs/solana_rpc.log",
+      "service_module": "ccs.services.solana_rpc",
+      "failure_cooldown_seconds": 30,
+      "status_file": "data/solana_rpc_status.json"
+    }
+  },
+  "architecture": {
+    "core_package": "ccs.core",
+    "services_package": "ccs.services",
+    "storage_package": "ccs.storage",
+    "compatibility_layer": "app"
+  },
+  "scanner": {
+    "metadata_enrichment": true,
+    "metadata_cache": true,
+    "metadata_cache_ttl_seconds": 21600,
+    "max_spl_tokens_per_wallet": 100,
+    "token_sources": [
+      "helius",
+      "dexscreener",
+      "fallback"
+    ]
+  }
+}
