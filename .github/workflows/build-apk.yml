@@ -27,9 +27,98 @@ jobs:
             pkg-config \
             zlib1g-dev \
             libffi-dev \
-            libssl-dev
+            libssl-dev \
+            ccache \
+            build-essential
 
       - name: Instalar Buildozer
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install buildozer cy
+          python3 -m pip install buildozer cython
+
+      - name: Preparar Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;37.0.0"
+
+          echo "SDK preparado."
+          ls -la ${ANDROID_HOME}/build-tools/
+          ls -la ${ANDROID_HOME}/build-tools/37.0.0/
+
+      - name: Configurar SDK no Buildozer
+        run: |
+          sed -i '/^[[:space:]]*android\.sdk_path[[:space:]]*=/d' buildozer.spec
+          sed -i '/^[[:space:]]*#android\.sdk_path[[:space:]]*=/d' buildozer.spec
+
+          printf '\nandroid.sdk_path = %s\n' "$ANDROID_HOME" >> buildozer.spec
+
+          echo "Configuracao aplicada:"
+          grep -n "android.sdk_path" buildozer.spec
+
+      - name: Verificar projeto
+        run: |
+          echo "Diretorio atual:"
+          pwd
+
+          echo "Arquivos principais:"
+          ls -la
+
+          echo "Buildozer spec:"
+          test -f buildozer.spec
+
+          echo "Main:"
+          test -f main.py
+
+          echo "Configuracao Android:"
+          grep -E "^(title|package.name|package.domain|source.dir|requirements|android.api|android.minapi|android.archs|android.sdk_path)" buildozer.spec || true
+
+      - name: Compilar APK
+        env:
+          ANDROIDSDK: ${{ env.ANDROID_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: |
+          buildozer -v android debug
+
+      - name: Localizar APK
+        run: |
+          echo "Conteudo da pasta bin:"
+          ls -lah bin || true
+
+          echo "APKs encontrados:"
+          find . -type f -name "*.apk" -print
+
+          APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERRO: nenhum APK foi encontrado em bin/"
+            exit 1
+          fi
+
+      - name: Preparar APK para download
+        run: |
+          mkdir -p release
+
+          APK_FILE=$(find bin -maxdepth 1 -type f -name "*.apk" | head -n 1)
+
+          echo "APK original:"
+          echo "$APK_FILE"
+
+          cp "$APK_FILE" release/Crypto_Certified_Switch_v7_1_0_debug.apk
+
+          echo "APK preparado:"
+          ls -lh release/
+
+      - name: Salvar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypto-Certified-Switch-APK
+          path: release/Crypto_Certified_Switch_v7_1_0_debug.apk
+          if-no-files-found: error
+          retention-days: 30
