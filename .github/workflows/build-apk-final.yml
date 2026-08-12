@@ -22,6 +22,7 @@ jobs:
       APP_ANDROID_SKIP_UPDATE: "False"
 
     steps:
+
       # ============================================================
       # 01 - BAIXAR PROJETO
       # ============================================================
@@ -95,6 +96,7 @@ jobs:
             autopoint \
             libtool \
             libtool-bin \
+            libltdl-dev \
             pkg-config \
             zlib1g-dev \
             libncurses5-dev \
@@ -112,35 +114,48 @@ jobs:
             cargo
 
           echo
-          echo "=== JAVA ==="
+          echo "=============================================="
+          echo " JAVA"
+          echo "=============================================="
+
           java -version
           javac -version
 
           echo
-          echo "=== AUTOCONF ==="
+          echo "=============================================="
+          echo " AUTOCONF / AUTOMAKE / LIBTOOL"
+          echo "=============================================="
+
           autoconf --version
-
-          echo
-          echo "=== AUTOMAKE ==="
           automake --version
-
-          echo
-          echo "=== LIBTOOL ==="
           libtoolize --version
 
           echo
-          echo "=== CMAKE ==="
-          cmake --version
+          echo "=============================================="
+          echo " LIBLTDL"
+          echo "=============================================="
+
+          dpkg -s libltdl-dev | grep -E 'Status|Version'
 
           echo
-          echo "=== RUST ==="
+          echo "Arquivos m4 do libtool:"
+          dpkg -L libtool | grep '/aclocal/' || true
+          dpkg -L libltdl-dev | grep -E '\.m4$' || true
+
+          echo
+          echo "=============================================="
+          echo " CMAKE / RUST"
+          echo "=============================================="
+
+          cmake --version
           rustc --version
           cargo --version
 
+          echo
+          echo "OK: dependencias instaladas."
+
       # ============================================================
       # 05 - INSTALAR PYTHON 3.14
-      #
-      # p4a.branch = develop requer a toolchain moderna.
       # ============================================================
 
       - name: Instalar Python 3.14
@@ -156,12 +171,10 @@ jobs:
             python3.14-venv \
             python3.14-dev
 
-          echo
-          echo "=== PYTHON 3.14 ==="
           python3.14 --version
 
       # ============================================================
-      # 06 - PREPARAR BUILDOZER MODERNO
+      # 06 - PREPARAR BUILDOZER
       # ============================================================
 
       - name: Preparar Buildozer
@@ -200,7 +213,7 @@ jobs:
           cython --version
 
       # ============================================================
-      # 07 - VALIDAR SINTAXE PYTHON DO PROJETO
+      # 07 - VALIDAR PYTHON DO PROJETO
       # ============================================================
 
       - name: Validar sintaxe Python
@@ -269,7 +282,7 @@ jobs:
           set -euo pipefail
 
           echo "=============================================="
-          echo " BUILDOZER.SPEC EFETIVO"
+          echo " BUILDOZER.SPEC"
           echo "=============================================="
 
           cat buildozer.spec
@@ -300,7 +313,7 @@ jobs:
           }
 
           grep -q '^android.accept_sdk_license = True' buildozer.spec || {
-            echo "ERRO: aceitacao de licenca nao configurada."
+            echo "ERRO: aceitacao da licenca nao configurada."
             exit 1
           }
 
@@ -328,10 +341,53 @@ jobs:
           mkdir -p bin
           mkdir -p artifact
 
-          echo "OK: build limpo."
+          echo "OK: ambiente limpo."
 
       # ============================================================
-      # 10 - CONFIRMAR TOOLCHAIN
+      # 10 - VERIFICAR MACROS LIBTOOL
+      #
+      # Verificacao direta antes de iniciar uma compilacao longa.
+      # ============================================================
+
+      - name: Verificar macros Libtool
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo " MACROS LIBTOOL"
+          echo "=============================================="
+
+          MACRO_FOUND=0
+
+          for dir in \
+            /usr/share/aclocal \
+            /usr/local/share/aclocal
+          do
+            if [ -d "$dir" ]; then
+              if grep -R \
+                "AC_DEFUN.*LT_SYS_SYMBOL_USCORE" \
+                "$dir" \
+                >/dev/null 2>&1
+              then
+                echo "OK: LT_SYS_SYMBOL_USCORE encontrado em $dir"
+                MACRO_FOUND=1
+              fi
+            fi
+          done
+
+          if [ "$MACRO_FOUND" -ne 1 ]; then
+            echo
+            echo "ERRO:"
+            echo "Macro LT_SYS_SYMBOL_USCORE nao encontrada."
+            echo
+            echo "Conteudo de /usr/share/aclocal:"
+            ls -la /usr/share/aclocal || true
+            exit 1
+          fi
+
+      # ============================================================
+      # 11 - VERIFICAR TOOLCHAIN
       # ============================================================
 
       - name: Verificar toolchain final
@@ -345,36 +401,21 @@ jobs:
           echo " TOOLCHAIN FINAL"
           echo "=============================================="
 
-          echo
-          echo "Python:"
           python --version
-
-          echo
-          echo "Buildozer:"
           buildozer --version
+          cython --version
 
-          echo
-          echo "Java:"
           java -version
-
-          echo
-          echo "Javac:"
           javac -version
 
           echo
-          echo "JAVA_HOME:"
-          echo "$JAVA_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
 
-          echo
-          echo "Rust:"
           rustc --version
-
-          echo
-          echo "Cargo:"
           cargo --version
 
       # ============================================================
-      # 11 - COMPILAR APK
+      # 12 - COMPILAR APK
       # ============================================================
 
       - name: Compilar APK
@@ -388,9 +429,27 @@ jobs:
           export APP_ANDROID_ACCEPT_SDK_LICENSE="True"
           export APP_ANDROID_SKIP_UPDATE="False"
 
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/local/share/aclocal"
+
           echo "=============================================="
           echo " INICIANDO COMPILACAO"
           echo "=============================================="
+
+          echo
+          echo "ACLOCAL_PATH:"
+          echo "$ACLOCAL_PATH"
+
+          echo
+          echo "Python:"
+          python --version
+
+          echo
+          echo "Buildozer:"
+          buildozer --version
+
+          echo
+          echo "Java:"
+          java -version
 
           buildozer -v android debug \
             > >(tee build-apk.log) \
@@ -408,7 +467,7 @@ jobs:
           exit "$BUILD_EXIT"
 
       # ============================================================
-      # 12 - DIAGNOSTICO AUTOMATICO
+      # 13 - DIAGNOSTICO
       # ============================================================
 
       - name: Diagnosticar erro
@@ -427,21 +486,21 @@ jobs:
           fi
 
           echo
-          echo "=== ULTIMAS 500 LINHAS ==="
+          echo "=== ULTIMAS 600 LINHAS ==="
 
-          tail -n 500 build-apk.log || true
+          tail -n 600 build-apk.log || true
 
           echo
           echo "=== ERROS IMPORTANTES ==="
 
           grep -niE \
-            'error:|failed|failure|exception|traceback|command failed|no such file|not found|undefined reference|cannot|could not|license|aidl|gradle|clang|cython|autoconf|automake|libtool|sdkmanager|ndk|sdk|kivy|python3' \
+            'error:|failed|failure|exception|traceback|command failed|no such file|not found|undefined reference|cannot|could not|license|aidl|gradle|clang|cython|autoconf|automake|libtool|ltdl|LT_SYS_SYMBOL_USCORE|sdkmanager|ndk|sdk|kivy|python3' \
             build-apk.log \
-            | tail -n 300 \
+            | tail -n 400 \
             || true
 
       # ============================================================
-      # 13 - MOSTRAR SDK / NDK / P4A
+      # 14 - MOSTRAR SDK NDK P4A
       # ============================================================
 
       - name: Mostrar SDK NDK e P4A
@@ -454,9 +513,6 @@ jobs:
           echo " SDK / NDK / P4A"
           echo "=============================================="
 
-          echo
-          echo "=== ANDROID PLATFORM ==="
-
           find "$HOME/.buildozer/android/platform" \
             -maxdepth 3 \
             -type d \
@@ -465,19 +521,8 @@ jobs:
             | tail -n 300 \
             || true
 
-          echo
-          echo "=== PYTHON-FOR-ANDROID ==="
-
-          find "$HOME/.buildozer/android/platform" \
-            -maxdepth 2 \
-            -type d \
-            -name 'python-for-android' \
-            -print \
-            2>/dev/null \
-            || true
-
       # ============================================================
-      # 14 - MOSTRAR ARQUIVOS GERADOS
+      # 15 - MOSTRAR RESULTADOS
       # ============================================================
 
       - name: Mostrar arquivos gerados
@@ -489,9 +534,6 @@ jobs:
           echo "=============================================="
           echo " ARQUIVOS GERADOS"
           echo "=============================================="
-
-          echo
-          echo "=== BIN ==="
 
           find bin \
             -maxdepth 2 \
@@ -511,7 +553,7 @@ jobs:
             || true
 
       # ============================================================
-      # 15 - PREPARAR APK FINAL
+      # 16 - PREPARAR APK FINAL
       # ============================================================
 
       - name: Preparar APK final
@@ -530,12 +572,9 @@ jobs:
           )"
 
           if [ -z "$APK" ]; then
-            echo "ERRO: nenhum APK encontrado em bin/."
+            echo "ERRO: nenhum APK encontrado."
             exit 1
           fi
-
-          echo "APK encontrado:"
-          echo "$APK"
 
           cp \
             "$APK" \
@@ -552,7 +591,7 @@ jobs:
           cat artifact/SHA256.txt
 
       # ============================================================
-      # 16 - SALVAR APK
+      # 17 - SALVAR APK
       # ============================================================
 
       - name: Salvar APK
@@ -567,7 +606,7 @@ jobs:
           retention-days: 30
 
       # ============================================================
-      # 17 - SALVAR LOG SE FALHAR
+      # 18 - SALVAR LOG SE FALHAR
       # ============================================================
 
       - name: Salvar log se falhar
@@ -583,7 +622,7 @@ jobs:
           retention-days: 14
 
       # ============================================================
-      # 18 - CONCLUSAO
+      # 19 - CONCLUSAO
       # ============================================================
 
       - name: Build concluido
