@@ -6,86 +6,96 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: crypto-certified-switch-android-build
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Compilar Crypto Certified Switch
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     env:
       DEBIAN_FRONTEND: noninteractive
       JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
+      # Faz o Buildozer aceitar automaticamente
+      # as licencas do Android SDK durante o CI.
+      APP_ANDROID_ACCEPT_SDK_LICENSE: "True"
+
+      # Mantemos atualizacao do SDK habilitada.
+      APP_ANDROID_SKIP_UPDATE: "False"
+
     steps:
+
+      # ============================================================
+      # 1. BAIXAR PROJETO
+      # ============================================================
+
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Verificar arquivos principais
+      # ============================================================
+      # 2. INFORMACOES DO RUNNER
+      # ============================================================
+
+      - name: Verificar ambiente Ubuntu
         shell: bash
         run: |
           set -e
 
-          echo "=== RAIZ DO PROJETO ==="
+          echo "============================================"
+          echo " CRYPTO CERTIFIED SWITCH - BUILD ANDROID"
+          echo "============================================"
+
+          echo
+          echo "Diretorio:"
           pwd
+
+          echo
+          echo "Arquivos:"
           ls -la
 
+          echo
+          echo "Sistema:"
+          uname -a
+
+          echo
+          echo "Arquitetura:"
+          uname -m
+
+      # ============================================================
+      # 3. VALIDAR ESTRUTURA DO PROJETO
+      # ============================================================
+
+      - name: Verificar estrutura do projeto
+        shell: bash
+        run: |
+          set -e
+
           if [ ! -f "buildozer.spec" ]; then
-            echo "ERRO: buildozer.spec não encontrado na raiz."
+            echo "ERRO: buildozer.spec nao encontrado."
             exit 1
           fi
 
           if [ ! -f "main.py" ]; then
-            echo "ERRO: main.py não encontrado na raiz."
+            echo "ERRO: main.py nao encontrado."
             exit 1
           fi
 
-          echo "OK: arquivos principais encontrados."
+          echo "OK: buildozer.spec encontrado."
+          echo "OK: main.py encontrado."
 
-      - name: Validar sintaxe Python do projeto
-        shell: bash
-        run: |
-          set -e
+          echo
+          echo "=== BUILDOZER.SPEC ==="
+          cat buildozer.spec
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import py_compile
-          import sys
+      # ============================================================
+      # 4. INSTALAR DEPENDENCIAS UBUNTU
+      # ============================================================
 
-          ignored = {
-              ".git",
-              ".buildozer",
-              "bin",
-              "__pycache__",
-              ".venv",
-              "venv",
-          }
-
-          errors = []
-
-          for path in Path(".").rglob("*.py"):
-              if any(part in ignored for part in path.parts):
-                  continue
-
-              try:
-                  py_compile.compile(
-                      str(path),
-                      doraise=True,
-                  )
-                  print("OK:", path)
-              except Exception as exc:
-                  errors.append((path, exc))
-
-          if errors:
-              print("\n=== ERROS PYTHON ===")
-              for path, exc in errors:
-                  print(path)
-                  print(exc)
-              sys.exit(1)
-
-          print("\nTodos os arquivos Python passaram na validação.")
-          PY
-
-      - name: Instalar dependencias Ubuntu
+      - name: Instalar dependencias do sistema
         shell: bash
         run: |
           set -e
@@ -96,14 +106,16 @@ jobs:
             git \
             zip \
             unzip \
+            wget \
+            curl \
             openjdk-17-jdk \
             python3 \
             python3-pip \
             python3-venv \
-            python3-virtualenv \
             autoconf \
             automake \
             libtool \
+            libtool-bin \
             pkg-config \
             zlib1g-dev \
             libncurses5-dev \
@@ -114,45 +126,237 @@ jobs:
             libssl-dev \
             autopoint \
             gettext \
-            libltdl-dev \
             patch \
-            build-essential
+            build-essential \
+            ccache
 
+          echo
+          echo "=== JAVA ==="
           java -version
           javac -version
+
+          echo
+          echo "=== PYTHON ==="
           python3 --version
 
-      - name: Criar ambiente Python
+          echo
+          echo "=== GIT ==="
+          git --version
+
+      # ============================================================
+      # 5. AMBIENTE PYTHON ISOLADO
+      # ============================================================
+
+      - name: Criar ambiente Python do Buildozer
         shell: bash
         run: |
           set -e
 
+          rm -rf .venv
           python3 -m venv .venv
+
           source .venv/bin/activate
 
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "buildozer==1.5.0" "cython<3"
+          python -m pip install --upgrade \
+            pip \
+            setuptools \
+            wheel
 
-          echo "=== BUILD ENV ==="
+          python -m pip install \
+            "buildozer==1.5.0" \
+            "cython<3"
+
+          echo
+          echo "=== VERSOES ==="
           python --version
           buildozer --version
+          cython --version
 
-      - name: Mostrar buildozer.spec
+      # ============================================================
+      # 6. VALIDAR PYTHON DO APLICATIVO
+      # ============================================================
+
+      - name: Validar sintaxe Python
         shell: bash
         run: |
           set -e
 
-          echo "=== BUILDOZER SPEC ==="
-          cat buildozer.spec
+          source .venv/bin/activate
 
-      - name: Limpar somente residuos locais
+          python - <<'PY'
+          from pathlib import Path
+          import py_compile
+          import sys
+
+          IGNORAR = {
+              ".git",
+              ".github",
+              ".buildozer",
+              ".venv",
+              "venv",
+              "bin",
+              "artifact",
+              "__pycache__",
+          }
+
+          erros = []
+
+          for arquivo in Path(".").rglob("*.py"):
+              if any(parte in IGNORAR for parte in arquivo.parts):
+                  continue
+
+              try:
+                  py_compile.compile(
+                      str(arquivo),
+                      doraise=True
+                  )
+                  print("OK:", arquivo)
+              except Exception as exc:
+                  erros.append((arquivo, exc))
+
+          if erros:
+              print()
+              print("================================")
+              print(" ERROS DE SINTAXE PYTHON")
+              print("================================")
+
+              for arquivo, erro in erros:
+                  print()
+                  print("Arquivo:", arquivo)
+                  print("Erro:", erro)
+
+              sys.exit(1)
+
+          print()
+          print("OK: todos os arquivos Python passaram.")
+          PY
+
+      # ============================================================
+      # 7. GARANTIR ACEITE DE LICENCA NO BUILDOZER.SPEC
+      #
+      # Criamos uma copia de build exclusiva para o runner.
+      # O arquivo original do repositorio nao e alterado.
+      # ============================================================
+
+      - name: Preparar configuracao Android para CI
+        shell: bash
+        run: |
+          set -e
+
+          cp buildozer.spec buildozer-ci.spec
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("buildozer-ci.spec")
+          texto = p.read_text(encoding="utf-8")
+
+          linhas = texto.splitlines()
+          novas = []
+
+          encontrou_licenca = False
+          encontrou_skip = False
+
+          for linha in linhas:
+              limpa = linha.strip()
+
+              if limpa.startswith("android.accept_sdk_license"):
+                  novas.append("android.accept_sdk_license = True")
+                  encontrou_licenca = True
+                  continue
+
+              if limpa.startswith("#android.accept_sdk_license"):
+                  novas.append("android.accept_sdk_license = True")
+                  encontrou_licenca = True
+                  continue
+
+              if limpa.startswith("# android.accept_sdk_license"):
+                  novas.append("android.accept_sdk_license = True")
+                  encontrou_licenca = True
+                  continue
+
+              if limpa.startswith("android.skip_update"):
+                  novas.append("android.skip_update = False")
+                  encontrou_skip = True
+                  continue
+
+              if limpa.startswith("#android.skip_update"):
+                  novas.append("android.skip_update = False")
+                  encontrou_skip = True
+                  continue
+
+              if limpa.startswith("# android.skip_update"):
+                  novas.append("android.skip_update = False")
+                  encontrou_skip = True
+                  continue
+
+              novas.append(linha)
+
+          if not encontrou_licenca:
+              novas.append("")
+              novas.append("android.accept_sdk_license = True")
+
+          if not encontrou_skip:
+              novas.append("android.skip_update = False")
+
+          p.write_text(
+              "\n".join(novas) + "\n",
+              encoding="utf-8"
+          )
+
+          print("Configuracao CI criada.")
+          PY
+
+          echo
+          echo "=== CONFIGURACAO ANDROID CI ==="
+
+          grep -E \
+            "android.accept_sdk_license|android.skip_update|android.api|android.minapi|android.ndk" \
+            buildozer-ci.spec || true
+
+      # ============================================================
+      # 8. USAR A CONFIGURACAO CI COMO SPEC ATIVO
+      # ============================================================
+
+      - name: Ativar buildozer.spec para GitHub Actions
+        shell: bash
+        run: |
+          set -e
+
+          mv buildozer.spec buildozer-original.spec
+          mv buildozer-ci.spec buildozer.spec
+
+          echo "=== CONFIG ATIVA ==="
+
+          grep -E \
+            "android.accept_sdk_license|android.skip_update|android.api|android.minapi|android.ndk" \
+            buildozer.spec || true
+
+      # ============================================================
+      # 9. LIMPAR SOMENTE BUILD DO RUNNER
+      #
+      # O GitHub runner e descartavel.
+      # Isso nao apaga nada do projeto do usuario.
+      # ============================================================
+
+      - name: Preparar diretorios de compilacao
         shell: bash
         run: |
           set -e
 
           rm -rf .buildozer
           rm -rf bin
+          rm -rf artifact
+
           mkdir -p bin
+          mkdir -p artifact
+
+      # ============================================================
+      # 10. COMPILAR APK
+      #
+      # "yes" permanece como segunda camada de seguranca
+      # para prompts de licenca do SDK.
+      # ============================================================
 
       - name: Compilar APK
         shell: bash
@@ -164,23 +368,52 @@ jobs:
           export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
           export PATH="$JAVA_HOME/bin:$PATH"
 
-          echo "=== INICIANDO BUILD ==="
+          export APP_ANDROID_ACCEPT_SDK_LICENSE="True"
+          export APP_ANDROID_SKIP_UPDATE="False"
 
-          buildozer -v android debug 2>&1 | tee build-apk.log
+          echo "============================================"
+          echo " INICIANDO BUILD ANDROID"
+          echo "============================================"
+
+          yes | buildozer -v android debug 2>&1 | tee build-apk.log
+
+      # ============================================================
+      # 11. DIAGNOSTICO SEMPRE EXECUTADO
+      # ============================================================
 
       - name: Mostrar arquivos gerados
         if: always()
         shell: bash
         run: |
-          echo "=== BIN ==="
-          find bin -maxdepth 2 -type f -print 2>/dev/null || true
+          echo "============================================"
+          echo " ARQUIVOS GERADOS"
+          echo "============================================"
 
           echo
-          echo "=== APKs ==="
+          echo "=== BIN ==="
+          find bin \
+            -maxdepth 2 \
+            -type f \
+            -print 2>/dev/null || true
+
+          echo
+          echo "=== APK / AAB ==="
           find . \
             -type f \
             \( -name "*.apk" -o -name "*.aab" \) \
             -print 2>/dev/null || true
+
+          echo
+          echo "=== BUILD TOOLS ==="
+          find "$HOME/.buildozer" \
+            -path "*build-tools*" \
+            -maxdepth 8 \
+            -type d \
+            -print 2>/dev/null || true
+
+      # ============================================================
+      # 12. LOCALIZAR APK
+      # ============================================================
 
       - name: Preparar APK final
         if: success()
@@ -195,28 +428,61 @@ jobs:
             exit 1
           fi
 
-          mkdir -p artifact
+          echo "APK encontrado:"
+          echo "$APK"
 
           cp "$APK" \
-            "artifact/Crypto-Certified-Switch-v7.1.0.apk"
+            artifact/Crypto-Certified-Switch-v7.1.0.apk
 
-          echo "APK final:"
-          ls -lh artifact/
+          echo
+          echo "=== APK FINAL ==="
+          ls -lh artifact/Crypto-Certified-Switch-v7.1.0.apk
+
+          sha256sum \
+            artifact/Crypto-Certified-Switch-v7.1.0.apk \
+            | tee artifact/SHA256.txt
+
+      # ============================================================
+      # 13. SALVAR APK
+      # ============================================================
 
       - name: Salvar APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Crypto-Certified-Switch-v7.1.0-APK
-          path: artifact/Crypto-Certified-Switch-v7.1.0.apk
+          path: |
+            artifact/Crypto-Certified-Switch-v7.1.0.apk
+            artifact/SHA256.txt
           if-no-files-found: error
           retention-days: 30
+
+      # ============================================================
+      # 14. SALVAR LOG COMPLETO SE HOUVER ERRO
+      # ============================================================
 
       - name: Salvar log se falhar
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Crypto-Certified-Switch-Build-Log
-          path: build-apk.log
+          name: Crypto-Certified-Switch-v7.1.0-Build-Log
+          path: |
+            build-apk.log
+            buildozer.spec
           if-no-files-found: warn
           retention-days: 7
+
+      # ============================================================
+      # 15. FINAL
+      # ============================================================
+
+      - name: Build concluido
+        if: success()
+        shell: bash
+        run: |
+          echo
+          echo "============================================"
+          echo " APK GERADO COM SUCESSO"
+          echo "============================================"
+          echo
+          echo "Crypto-Certified-Switch-v7.1.0.apk"
