@@ -1,466 +1,222 @@
-name: CCS APK FINAL
+name: Gerar APK Android Final
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Compilar Crypto Certified Switch
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-
-    permissions:
-      contents: read
-
-    container:
-      image: ghcr.io/kivy/buildozer:latest
-      options: --user root
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     env:
-      PYTHONUNBUFFERED: "1"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      DEBIAN_FRONTEND: noninteractive
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
     steps:
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Verificar estrutura do projeto
+      - name: Verificar arquivos principais
         shell: bash
         run: |
           set -e
 
-          echo "=============================================="
-          echo " CRYPTO CERTIFIED SWITCH v7.1.0"
-          echo " VERIFICACAO DA ESTRUTURA"
-          echo "=============================================="
-
+          echo "=== RAIZ DO PROJETO ==="
           pwd
           ls -la
 
-          test -f main.py || {
-            echo "ERRO: main.py nao encontrado."
+          if [ ! -f "buildozer.spec" ]; then
+            echo "ERRO: buildozer.spec não encontrado na raiz."
             exit 1
-          }
+          fi
 
-          test -f android_config.py || {
-            echo "ERRO: android_config.py nao encontrado."
+          if [ ! -f "main.py" ]; then
+            echo "ERRO: main.py não encontrado na raiz."
             exit 1
-          }
+          fi
 
-          test -f buildozer.spec || {
-            echo "ERRO: buildozer.spec nao encontrado."
-            exit 1
-          }
+          echo "OK: arquivos principais encontrados."
 
-          test -f config.json || {
-            echo "ERRO: config.json nao encontrado."
-            exit 1
-          }
-
-          test -d app || {
-            echo "ERRO: pasta app nao encontrada."
-            exit 1
-          }
-
-          test -d ccs || {
-            echo "ERRO: pasta ccs nao encontrada."
-            exit 1
-          }
-
-          echo ""
-          echo "Estrutura principal encontrada com sucesso."
-
-      - name: Verificar ambiente de compilacao
+      - name: Validar sintaxe Python do projeto
         shell: bash
         run: |
           set -e
 
-          echo "=============================================="
-          echo " AMBIENTE"
-          echo "=============================================="
-
-          echo "Usuario:"
-          whoami
-
-          echo ""
-          echo "Python:"
-          python3 --version
-
-          echo ""
-          echo "Buildozer:"
-          buildozer --version
-
-          echo ""
-          echo "Java:"
-          java -version
-
-          echo ""
-          echo "Git:"
-          git --version
-
-          echo ""
-          echo "Diretorio HOME:"
-          echo "$HOME"
-
-          echo ""
-          echo "Espaco disponivel:"
-          df -h .
-
-      - name: Validar codigo Python
-        shell: bash
-        run: |
-          set -e
-
-          echo "=============================================="
-          echo " VALIDANDO PYTHON"
-          echo "=============================================="
-
-          python3 -m py_compile main.py
-          python3 -m py_compile android_config.py
-
-          find app \
-            -type f \
-            -name "*.py" \
-            -print0 \
-            | xargs -0 -r -n1 python3 -m py_compile
-
-          find ccs \
-            -type f \
-            -name "*.py" \
-            -print0 \
-            | xargs -0 -r -n1 python3 -m py_compile
-
-          echo ""
-          echo "Codigo Python validado."
-
-      - name: Preparar buildozer.spec definitivo
-        shell: bash
-        run: |
-          set -e
-
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
+          import py_compile
+          import sys
 
-          path = Path("buildozer.spec")
-
-          text = path.read_text(
-              encoding="utf-8",
-              errors="replace",
-          )
-
-          lines = text.splitlines()
-
-          app_values = {
-              "title": "Crypto Certified Switch",
-              "package.name": "cryptocertifiedswitch",
-              "package.domain": "com.ccs",
-              "source.dir": ".",
-              "source.include_exts": "py,json,txt,md,png,jpg,kv",
-              "source.exclude_dirs": ".venv,backups,logs,data,tests,__pycache__,.git,.github",
-              "version": "7.1.0",
-              "requirements": "python3,kivy",
-              "orientation": "portrait",
-              "fullscreen": "0",
-              "android.permissions": "INTERNET",
-              "android.api": "35",
-              "android.minapi": "26",
-              "android.archs": "arm64-v8a",
-              "android.allow_backup": "False",
-              "android.accept_sdk_license": "True",
+          ignored = {
+              ".git",
+              ".buildozer",
+              "bin",
+              "__pycache__",
+              ".venv",
+              "venv",
           }
 
-          buildozer_values = {
-              "log_level": "2",
-              "warn_on_root": "0",
-          }
+          errors = []
 
-          result = []
-
-          section = None
-          seen_app = set()
-          seen_buildozer = set()
-
-          def is_section(line):
-              s = line.strip()
-              return (
-                  s.startswith("[")
-                  and s.endswith("]")
-              )
-
-          def normalized_key(line):
-              s = line.strip()
-
-              if s.startswith("#"):
-                  s = s[1:].strip()
-
-              if "=" not in s:
-                  return None
-
-              return s.split("=", 1)[0].strip()
-
-          for line in lines:
-              stripped = line.strip()
-
-              if is_section(line):
-                  if section == "app":
-                      for key, value in app_values.items():
-                          if key not in seen_app:
-                              result.append(
-                                  f"{key} = {value}"
-                              )
-
-                  elif section == "buildozer":
-                      for key, value in buildozer_values.items():
-                          if key not in seen_buildozer:
-                              result.append(
-                                  f"{key} = {value}"
-                              )
-
-                  section = stripped[1:-1].strip()
-                  result.append(line)
+          for path in Path(".").rglob("*.py"):
+              if any(part in ignored for part in path.parts):
                   continue
 
-              key = normalized_key(line)
-
-              if section == "app" and key in app_values:
-                  result.append(
-                      f"{key} = {app_values[key]}"
+              try:
+                  py_compile.compile(
+                      str(path),
+                      doraise=True,
                   )
-                  seen_app.add(key)
-                  continue
+                  print("OK:", path)
+              except Exception as exc:
+                  errors.append((path, exc))
 
-              if section == "buildozer" and key in buildozer_values:
-                  result.append(
-                      f"{key} = {buildozer_values[key]}"
-                  )
-                  seen_buildozer.add(key)
-                  continue
+          if errors:
+              print("\n=== ERROS PYTHON ===")
+              for path, exc in errors:
+                  print(path)
+                  print(exc)
+              sys.exit(1)
 
-              # Remove configuracoes antigas que causaram
-              # conflitos de SDK/NDK nas tentativas anteriores.
-              if key in {
-                  "android.sdk_path",
-                  "android.ndk_path",
-                  "android.skip_update",
-              }:
-                  continue
-
-              result.append(line)
-
-          if section == "app":
-              for key, value in app_values.items():
-                  if key not in seen_app:
-                      result.append(
-                          f"{key} = {value}"
-                      )
-
-          elif section == "buildozer":
-              for key, value in buildozer_values.items():
-                  if key not in seen_buildozer:
-                      result.append(
-                          f"{key} = {value}"
-                      )
-
-          text = "\n".join(result).rstrip() + "\n"
-
-          if "[app]" not in text:
-              raise SystemExit(
-                  "ERRO: secao [app] nao encontrada."
-              )
-
-          if "[buildozer]" not in text:
-              text += (
-                  "\n"
-                  "[buildozer]\n"
-                  "log_level = 2\n"
-                  "warn_on_root = 0\n"
-              )
-
-          path.write_text(
-              text,
-              encoding="utf-8",
-          )
-
-          print(
-              "buildozer.spec preparado com sucesso."
-          )
+          print("\nTodos os arquivos Python passaram na validação.")
           PY
 
-          echo ""
-          echo "=============================================="
-          echo " BUILDOZER.SPEC FINAL"
-          echo "=============================================="
+      - name: Instalar dependencias Ubuntu
+        shell: bash
+        run: |
+          set -e
 
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            python3 \
+            python3-pip \
+            python3-venv \
+            python3-virtualenv \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo6 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            autopoint \
+            gettext \
+            libltdl-dev \
+            patch \
+            build-essential
+
+          java -version
+          javac -version
+          python3 --version
+
+      - name: Criar ambiente Python
+        shell: bash
+        run: |
+          set -e
+
+          python3 -m venv .venv
+          source .venv/bin/activate
+
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "buildozer==1.5.0" "cython<3"
+
+          echo "=== BUILD ENV ==="
+          python --version
+          buildozer --version
+
+      - name: Mostrar buildozer.spec
+        shell: bash
+        run: |
+          set -e
+
+          echo "=== BUILDOZER SPEC ==="
           cat buildozer.spec
 
-      - name: Confirmar configuracao Android
+      - name: Limpar somente residuos locais
         shell: bash
         run: |
           set -e
-
-          grep -q '^requirements = python3,kivy$' buildozer.spec
-          grep -q '^android.api = 35$' buildozer.spec
-          grep -q '^android.minapi = 26$' buildozer.spec
-          grep -q '^android.archs = arm64-v8a$' buildozer.spec
-          grep -q '^android.permissions = INTERNET$' buildozer.spec
-          grep -q '^android.accept_sdk_license = True$' buildozer.spec
-          grep -q '^warn_on_root = 0$' buildozer.spec
-
-          if grep -q '^[[:space:]]*android.sdk_path[[:space:]]*=' buildozer.spec; then
-            echo "ERRO: android.sdk_path ainda existe."
-            exit 1
-          fi
-
-          if grep -q '^[[:space:]]*android.ndk_path[[:space:]]*=' buildozer.spec; then
-            echo "ERRO: android.ndk_path ainda existe."
-            exit 1
-          fi
-
-          if grep -q '^[[:space:]]*android.skip_update[[:space:]]*=' buildozer.spec; then
-            echo "ERRO: android.skip_update ainda existe."
-            exit 1
-          fi
-
-          echo "Configuracao Android validada."
-
-      - name: Limpar compilacoes antigas
-        shell: bash
-        run: |
-          set -e
-
-          echo "=============================================="
-          echo " LIMPANDO BUILD ANTIGO"
-          echo "=============================================="
 
           rm -rf .buildozer
           rm -rf bin
-          rm -rf release
-
           mkdir -p bin
-          mkdir -p release
-
-          echo "Limpeza concluida."
-
-      - name: Criar arquivo de log
-        shell: bash
-        run: |
-          touch build.log
-          echo "CCS v7.1.0 Android Build" > build.log
-          echo "Inicio: $(date -u)" >> build.log
 
       - name: Compilar APK
         shell: bash
         run: |
-          set -e
           set -o pipefail
 
-          echo "=============================================="
-          echo " COMPILANDO CRYPTO CERTIFIED SWITCH"
-          echo "=============================================="
+          source .venv/bin/activate
 
-          buildozer -v android debug \
-            2>&1 \
-            | tee -a build.log
+          export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+          export PATH="$JAVA_HOME/bin:$PATH"
 
-      - name: Localizar APK gerado
+          echo "=== INICIANDO BUILD ==="
+
+          buildozer -v android debug 2>&1 | tee build-apk.log
+
+      - name: Mostrar arquivos gerados
+        if: always()
         shell: bash
         run: |
-          set -e
+          echo "=== BIN ==="
+          find bin -maxdepth 2 -type f -print 2>/dev/null || true
 
-          echo "=============================================="
-          echo " LOCALIZANDO APK"
-          echo "=============================================="
-
-          echo "Conteudo de bin:"
-          ls -lah bin || true
-
-          echo ""
-          echo "APK(s) encontrados:"
-
-          find bin \
-            -maxdepth 1 \
+          echo
+          echo "=== APKs ==="
+          find . \
             -type f \
-            -iname "*.apk" \
-            -print
-
-          APK_PATH="$(
-            find bin \
-              -maxdepth 1 \
-              -type f \
-              -iname "*.apk" \
-              | head -n 1
-          )"
-
-          if [ -z "$APK_PATH" ]; then
-            echo "ERRO: nenhum APK foi gerado."
-            exit 1
-          fi
-
-          if [ ! -f "$APK_PATH" ]; then
-            echo "ERRO: caminho do APK invalido."
-            exit 1
-          fi
-
-          echo ""
-          echo "APK localizado:"
-          echo "$APK_PATH"
-
-          echo "CCS_APK=$APK_PATH" >> "$GITHUB_ENV"
+            \( -name "*.apk" -o -name "*.aab" \) \
+            -print 2>/dev/null || true
 
       - name: Preparar APK final
+        if: success()
         shell: bash
         run: |
           set -e
 
-          FINAL_APK="release/Crypto_Certified_Switch_v7_1_0_arm64.apk"
+          APK="$(find bin -maxdepth 1 -type f -name '*.apk' | head -n 1)"
 
-          cp "$CCS_APK" "$FINAL_APK"
+          if [ -z "$APK" ]; then
+            echo "ERRO: nenhum APK encontrado em bin/."
+            exit 1
+          fi
 
-          test -f "$FINAL_APK"
+          mkdir -p artifact
 
-          echo "=============================================="
-          echo " APK FINAL"
-          echo "=============================================="
+          cp "$APK" \
+            "artifact/Crypto-Certified-Switch-v7.1.0.apk"
 
-          ls -lh "$FINAL_APK"
-
-          echo ""
-          echo "SHA256:"
-          sha256sum "$FINAL_APK"
+          echo "APK final:"
+          ls -lh artifact/
 
       - name: Salvar APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Crypto-Certified-Switch-v7.1.0-APK
-          path: release/Crypto_Certified_Switch_v7_1_0_arm64.apk
+          path: artifact/Crypto-Certified-Switch-v7.1.0.apk
           if-no-files-found: error
           retention-days: 30
-          compression-level: 0
 
-      - name: Salvar log se houver falha
+      - name: Salvar log se falhar
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: CCS-v7.1.0-Build-Logs
-          path: |
-            build.log
-            buildozer.spec
-            .buildozer/**/*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Build concluido
-        shell: bash
-        run: |
-          set -e
-
-          echo "=============================================="
-          echo " CRYPTO CERTIFIED SWITCH v7.1.0"
-          echo " APK GERADO COM SUCESSO"
-          echo "=============================================="
-          echo ""
-          echo "Artifact:"
-          echo "Crypto-Certified-Switch-v7.1.0-APK"
-          echo ""
-          echo "APK:"
-          echo "Crypto_Certified_Switch_v7_1_0_arm64.apk"
+          name: Crypto-Certified-Switch-Build-Log
+          path: build-apk.log
+          if-no-files-found: warn
+          retention-days: 7
